@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Yang · AI 分身</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0b0e14; --panel: #12161f; --bubble-ai: #1a2030; --bubble-me: #2563eb;
+    --text: #e8ecf3; --muted: #8b94a7; --accent: #f59e0b; --border: #232b3d;
+  }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; height: 100dvh; display: flex; flex-direction: column; }
+  header { padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  .avatar { width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #ef4444); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .who h1 { font-size: 16px; font-weight: 700; }
+  .who p { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #22c55e; margin-right: 4px; animation: blink 1.6s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  #chips { display: flex; gap: 8px; padding: 10px 16px; overflow-x: auto; background: var(--panel); border-bottom: 1px solid var(--border); scrollbar-width: none; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex-shrink: 0; font-size: 13px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
+  .chip:active { background: var(--bubble-ai); }
+  #msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 16px; font-size: 14.5px; line-height: 1.65; word-break: break-word; }
+  .msg.ai { background: var(--bubble-ai); border: 1px solid var(--border); border-bottom-left-radius: 4px; align-self: flex-start; }
+  .msg.me { background: var(--bubble-me); border-bottom-right-radius: 4px; align-self: flex-end; color: #fff; }
+  .msg a { color: #7dd3fc; }
+  .typing { display: inline-flex; gap: 5px; padding: 4px 2px; }
+  .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: tp 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .15s; } .typing span:nth-child(3) { animation-delay: .3s; }
+  @keyframes tp { 40% { transform: translateY(-5px); opacity: 1; } }
+  #bar { display: flex; gap: 10px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--panel); border-top: 1px solid var(--border); }
+  #in { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 11px 16px; color: var(--text); font-size: 15px; outline: none; }
+  #in:focus { border-color: var(--accent); }
+  #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; }
+  #send:disabled { opacity: .4; }
+  footer { text-align: center; font-size: 11px; color: var(--muted); padding: 8px; background: var(--panel); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="avatar" id="avatar">Y</div>
+  <div class="who">
+    <h1 id="name">Yang</h1>
+    <p><span class="dot"></span><span id="online">AI 分身 · 24h 在线</span><br><span id="tagline" style="color:#5b6b8c"></span></p>
+  </div>
+</header>
+
+<div id="chips"></div>
+<div id="msgs"></div>
+
+<div id="bar">
+  <input id="in" placeholder="问点什么…" autocomplete="off" maxlength="500">
+  <button id="send">➤</button>
+</div>
+<footer id="footer"></footer>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  // 页面文案全部取自 config.js
+  document.getElementById('avatar').textContent = PROFILE.avatarText;
+  document.getElementById('name').textContent = PROFILE.name;
+  document.getElementById('tagline').textContent = PROFILE.tagline;
+  document.getElementById('online').textContent = PROFILE.onlineText;
+  document.getElementById('footer').textContent = PROFILE.footer;
+  document.title = PROFILE.name + " · AI 分身";
+
+  const msgs = document.getElementById('msgs');
+  const input = document.getElementById('in');
+  const sendBtn = document.getElementById('send');
+  const chipsBox = document.getElementById('chips');
+  const history = [];   // 发给 AI 的上下文
+  let busy = false;
+
+  PROFILE.quickQuestions.forEach(q => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.textContent = q;
+    b.onclick = () => { input.value = q; send(); };
+    chipsBox.appendChild(b);
+  });
+
+  function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmt(s) {
+    s = esc(s);
+    s = s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    return s.replace(/\n/g, '<br>');
+  }
+  function addMsg(text, who) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + who;
+    d.innerHTML = who === 'ai' ? fmt(text) : esc(text);
+    msgs.appendChild(d);
+    msgs.scrollTop = msgs.scrollHeight;
+    return d;
+  }
+
+  async function askAI() {
+    // 主通道：POST（OpenAI 兼容格式，免费、无需 key）
+    const body = JSON.stringify({
+      model: "openai",
+      messages: [{ role: "system", content: PROFILE.systemPrompt }, ...history]
+    });
+    try {
+      const r = await fetch("https://text.pollinations.ai/openai", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body
+      });
+      if (!r.ok) throw new Error("post " + r.status);
+      const j = await r.json();
+      const c = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+      if (c) return c;
+      throw new Error("empty");
+    } catch (e) {
+      // 备用通道：GET
+      const last = history[history.length - 1].content;
+      const url = "https://text.pollinations.ai/" + encodeURIComponent(last)
+        + "?model=openai&system=" + encodeURIComponent(PROFILE.systemPrompt);
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("get " + r.status);
+      return await r.text();
+    }
+  }
+
+  async function send() {
+    const text = input.value.trim();
+    if (!text || busy) return;
+    busy = true; sendBtn.disabled = true;
+    input.value = '';
+    addMsg(text, 'me');
+    history.push({ role: "user", content: text });
+
+    const t = document.createElement('div');
+    t.className = 'msg ai';
+    t.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
+    msgs.appendChild(t); msgs.scrollTop = msgs.scrollHeight;
+
+    try {
+      const reply = (await askAI()).trim();
+      t.innerHTML = fmt(reply);
+      history.push({ role: "assistant", content: reply });
+      if (history.length > 12) history.splice(0, history.length - 12); // 只保留最近几轮，省流量
+    } catch (e) {
+      t.innerHTML = "刚才走神了，没连上。你再问一遍试试？";
+    }
+    msgs.scrollTop = msgs.scrollHeight;
+    busy = false; sendBtn.disabled = false; input.focus();
+  }
+
+  sendBtn.onclick = send;
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+  // 开场白
+  setTimeout(() => addMsg(PROFILE.greeting, 'ai'), 400);
+})();
+</script>
+</body>
+</html>
